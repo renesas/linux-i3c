@@ -948,8 +948,8 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 &i3c0 {
 	status = "okay";
 
-	i3c-pp-scl-hi-period-ns = <40>; //<40>; //<100>; // <30>;
-	i3c-pp-scl-lo-period-ns = <60>; //<60>; //<150>; // <50>;
+	i3c-pp-scl-hi-period-ns = <100>; //<40>; //<100>; // <30>;
+	i3c-pp-scl-lo-period-ns = <150>; //<60>; //<150>; // <50>;
 	i3c-od-scl-hi-period-ns = <400>;
 	i3c-od-scl-lo-period-ns = <600>;
 	sda-tx-hold-ns = <20>;
@@ -965,21 +965,21 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 
 		control-port {
 			port-name = "CP0";
-			io-microvolt = <1200000>;
-			vio-source = "external";
+			io-microvolt = <1000000>;
+			vio-source = "internal";
 		};
 
 		target-group-0 {
-			io-microvolt = <1800000>;
+			io-microvolt = <1000000>;
 			vio-source = "internal";
-			io-internal-pullups-ohms = <1000>;
+			io-internal-pullups-ohms = <500>;
 			// io-strength-ohms = <50>;
 		};
 
 		target-group-1 {
-			io-microvolt = <1800000>;
+			io-microvolt = <1000000>;
 			vio-source = "internal";
-			io-internal-pullups-ohms = <1000>;
+			io-internal-pullups-ohms = <500>;
 			// io-strength-ohms = <50>;
 		};
 
@@ -1029,7 +1029,7 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 
 		control-port {
 			port-name = "CP0";
-			io-microvolt = <1800000>;
+			io-microvolt = <1000000>;
 			vio-source = "external";
 		};
 
@@ -1043,9 +1043,9 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 
 		target-group-1 {
 			// For I3C Bridge
-			io-microvolt = <1800000>;
+			io-microvolt = <1000000>;
 			vio-source = "internal";
-			io-internal-pullups-ohms = <1000>;
+			io-internal-pullups-ohms = <500>;
 			// io-strength-ohms = <20>;
 		};
 
@@ -1060,6 +1060,88 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 			reg = <1>;
 
 			clock-frequency = <400000>;
+		};
+
+		i3c102:target-port@2 {
+			compatible = "i3c-hub-i3c";
+			reg = <2>;
+			device-scan-delay-ms = <1>;
+		};
+
+		i3c103:target-port@3 {
+			compatible = "i3c-hub-i3c";
+			reg = <3>;
+			device-scan-delay-ms = <1>;
+		};
+	};
+};
+
+// &i3c23 {
+// 	status = "okay";
+// 	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
+
+
+// 	JESD300_SPD_I3C_MODE(22, 0, 50);
+// 	JESD300_SPD_I3C_MODE(22, 1, 51);
+// 	JESD300_SPD_I3C_MODE(22, 2, 52);
+// 	JESD300_SPD_I3C_MODE(22, 3, 53);
+// 	JESD300_SPD_I3C_MODE(22, 4, 54);
+// 	JESD300_SPD_I3C_MODE(22, 5, 55);
+// 	JESD300_SPD_I3C_MODE(22, 6, 56);
+// 	JESD300_SPD_I3C_MODE(22, 7, 57);
+// };
+
+
+&i3c1 {
+	status = "okay";
+
+	i3c-pp-scl-hi-period-ns = <100>; //<40>; //<100>; // <30>;
+	i3c-pp-scl-lo-period-ns = <150>; //<60>; //<150>; // <50>;
+	i3c-od-scl-hi-period-ns = <400>;
+	i3c-od-scl-lo-period-ns = <600>;
+	sda-tx-hold-ns = <20>;
+
+	hub@2,4cc00000000 {
+		reg = <0x0 0x4cc 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		dcr = /bits/ 8 <0xc2>;
+
+		// id-cp1 = <1>;
+
+		control-port {
+			port-name = "CP0";
+			io-microvolt = <1000000>;
+			vio-source = "external";
+		};
+
+		target-group-0 {
+			// For SMBus Agent
+			io-microvolt = <1000000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <500>;
+			// io-strength-ohms = <20>;
+		};
+
+		target-group-1 {
+			// For I3C Bridge
+			io-microvolt = <1000000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <500>;
+			// io-strength-ohms = <20>;
+		};
+
+		target-port@0 {
+			compatible = "i3c-hub-i3c";
+			reg = <0>;
+			device-scan-delay-ms = <1>;
+		};
+
+		target-port@1 {
+			compatible = "i3c-hub-i3c";
+			reg = <1>;
+			device-scan-delay-ms = <1>;
 		};
 
 		i3c22:target-port@2 {
