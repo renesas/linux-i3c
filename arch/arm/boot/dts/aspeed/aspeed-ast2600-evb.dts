@@ -13,6 +13,13 @@
 
 	aliases {
 		serial4 = &uart5;
+		i3c10 = &i3c10;
+		i3c11 = &i3c11;
+		i3c12 = &i3c12;
+		i3c13 = &i3c13;
+
+		i3c22 = &i3c22;
+		i3c23 = &i3c23;
 	};
 
 	chosen {
@@ -940,86 +947,148 @@ spd_ ## bus ## _ ## index: spd@addr,4cc5118 ## index ## 000 { \
 
 &i3c0 {
 	status = "okay";
-	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
-	/* Renesas IMX3102 multiplexer w/ thermal sensor */
-	imx3102_0: i3cmux@f,4cc31020000 {
-		reg = <0xf 0x4cc 0x31020000>;
-		assigned-address = <0xf>;
-		dcr = /bits/ 8 <0xd1>;
-		bcr = /bits/ 8 <0x6>;
+
+	i3c-pp-scl-hi-period-ns = <40>; //<40>; //<100>; // <30>;
+	i3c-pp-scl-lo-period-ns = <60>; //<60>; //<150>; // <50>;
+	i3c-od-scl-hi-period-ns = <400>;
+	i3c-od-scl-lo-period-ns = <600>;
+	sda-tx-hold-ns = <20>;
+
+	hub@0,4cc00000000 {
+		reg = <0x0 0x4cc 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		dcr = /bits/ 8 <0xc2>;
+
+		// id-cp1 = <1>;
+
+		control-port {
+			port-name = "CP0";
+			io-microvolt = <1200000>;
+			vio-source = "external";
+		};
+
+		target-group-0 {
+			io-microvolt = <1800000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <1000>;
+			// io-strength-ohms = <50>;
+		};
+
+		target-group-1 {
+			io-microvolt = <1800000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <1000>;
+			// io-strength-ohms = <50>;
+		};
+
+		i3c10: target-port@0 {
+			status = "okay";
+			compatible = "i3c-hub-i3c";
+			reg = <0>;
+
+			device-scan-delay-ms = <1>;
+		};
+
+		i3c11: target-port@1 {
+			status = "okay";
+			compatible = "i3c-hub-i3c";
+			reg = <1>;
+
+			device-scan-delay-ms = <1>;
+		};
+
+		i3c12: target-port@2 {
+			status = "okay";
+			compatible = "i3c-hub-i3c";
+			reg = <2>;
+
+			device-scan-delay-ms = <1>;
+		};
+
+		i3c13: target-port@3 {
+			status = "okay";
+			compatible = "i3c-hub-i3c";
+			reg = <3>;
+
+			device-scan-delay-ms = <1>;
+		};
 	};
-
-	JESD300_SPD_I3C_MODE(0, 0, 50);
-	JESD300_SPD_I3C_MODE(0, 1, 51);
 };
 
-&i3c1 {
+&i3c10 {
+	hub@1,4cc00000001 {
+		reg = <0x0 0x4cc 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		dcr = /bits/ 8 <0xc2>;
+
+		// id-cp1 = <1>;
+
+		control-port {
+			port-name = "CP0";
+			io-microvolt = <1800000>;
+			vio-source = "external";
+		};
+
+		target-group-0 {
+			// For SMBus Agent
+			io-microvolt = <1800000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <2000>;
+			// io-strength-ohms = <20>;
+		};
+
+		target-group-1 {
+			// For I3C Bridge
+			io-microvolt = <1800000>;
+			vio-source = "internal";
+			io-internal-pullups-ohms = <1000>;
+			// io-strength-ohms = <20>;
+		};
+
+		target-port@0 {
+			compatible = "i3c-hub-smbus";
+			reg = <0>;
+			clock-frequency = <400000>;
+		};
+
+		target-port@1 {
+			compatible = "i3c-hub-smbus";
+			reg = <1>;
+
+			clock-frequency = <400000>;
+		};
+
+		i3c22:target-port@2 {
+			compatible = "i3c-hub-i3c";
+			reg = <2>;
+			device-scan-delay-ms = <1>;
+		};
+
+		i3c23:target-port@3 {
+			compatible = "i3c-hub-i3c";
+			reg = <3>;
+			device-scan-delay-ms = <1>;
+		};
+	};
+};
+
+&i3c22 {
 	status = "okay";
 	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
-	 /* Renesas IMX3102 multiplexer w/ thermal sensor */
-	imx3102_1: i3cmux@f,4cc31020000 {
-		reg = <0xf 0x4cc 0x31020000>;
-		assigned-address = <0xf>;
-		dcr = /bits/ 8 <0xd1>;
-		bcr = /bits/ 8 <0x6>;
-	};
 
-	JESD300_SPD_I3C_MODE(1, 0, 50);
-	JESD300_SPD_I3C_MODE(1, 1, 51);
-};
 
-&i3c2 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_i3c3_default>;
-
-	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
-	/* Renesas IMX3102 multiplexer w/ thermal sensor */
-	i3cmux@f {
-		compatible = "eeprom";
-		reg = <0xf 0x0 0x00000000>;
-	};
-
-	JESD300_SPD_I2C_MODE(2, 0, 52);
-	JESD300_SPD_I2C_MODE(2, 1, 53);
-};
-
-&i3c3 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_i3c4_default>;
-
-	bus-context = /bits/ 8 <I3C_BUS_CONTEXT_JESD403>;
-	/* Renesas IMX3102 multiplexer w/ thermal sensor */
-	i3cmux@f {
-		compatible = "eeprom";
-		reg = <0xf 0x0 0x00000000>;
-	};
-
-	JESD300_SPD_I2C_MODE(3, 0, 52);
-	JESD300_SPD_I2C_MODE(3, 1, 53);
-};
-
-/*
- * I3C loopback: connect I3C4 (target) to I3C5 (primary master)
- * Four devices will be created under /sys/bus/i3c/devices
- *   i3c-4: represent i3c4 controller, play the role as the target device
- *   i3c-5: represent i3c5 controller, play the role as the master device
- *   5-7ec05034000: the device descriptor represents the target device attached
- *		    to the bus hosted by i3c-5 controller. In this case,
- *		    5-7ec05034000 maps to the physical device i3c4.
- *   4-target: the device descriptor represents i3c-4 itself.
- */
-&i3c4 {
-	initial-role = "target";
-	pid = <0x000007ec 0x05034000>;
-	dcr = /bits/ 8 <0xcc>;
-	status = "okay";
-};
-
-&i3c5 {
-	initial-role = "primary";
-	status = "okay";
+	JESD300_SPD_I3C_MODE(22, 0, 50);
+	JESD300_SPD_I3C_MODE(22, 1, 51);
+	JESD300_SPD_I3C_MODE(22, 2, 52);
+	JESD300_SPD_I3C_MODE(22, 3, 53);
+	JESD300_SPD_I3C_MODE(22, 4, 54);
+	JESD300_SPD_I3C_MODE(22, 5, 55);
+	JESD300_SPD_I3C_MODE(22, 6, 56);
+	JESD300_SPD_I3C_MODE(22, 7, 57);
 };
 
 &ssp {
