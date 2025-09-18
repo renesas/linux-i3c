@@ -572,13 +572,6 @@ static void i3c_hub_agent_ibi(struct i3c_hub_smbus_agent *agent)
 		agent->tx_res = stat;
 		complete(&agent->completion);
 		spin_unlock_irqrestore(&agent->lock, flags);
-
-		ret = regmap_write(hub->regmap,
-				   HUB_REG_TP_SMBUS_AGNT_STS(agent->port_nr),
-				   HUB_REG_AGENT_CNTRL_STATUS_FINISH);
-		if (ret)
-			dev_warn(&hub->i3cdev->dev,
-				 "TP[%d] - failed to clear finish status\n", agent->port_nr);
 	}
 
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
@@ -727,6 +720,11 @@ static int i3c_hub_agent_i2c_xfer_one(struct i3c_hub_smbus_agent *agent,
 	}
 
 	reinit_completion(&agent->completion);
+	ret = regmap_write(hub->regmap,
+			   HUB_REG_TP_SMBUS_AGNT_STS(agent->port_nr),
+			   HUB_REG_AGENT_CNTRL_STATUS_FINISH);
+	if (ret)
+		dev_warn(dev, "TP[%d] - failed to clear finish status\n", agent->port_nr);
 
 	/* start transfer */
 	ret = regmap_write(hub->regmap, HUB_REG_TP_SMBUS_AGNT_TRANS_START, port_bit);
