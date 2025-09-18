@@ -24,6 +24,8 @@
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 
+#include "../pci.h"
+
 #define MAX_MSI_HOST_IRQS	64
 
 /* AST2600 AHBC Registers */
@@ -148,6 +150,7 @@ struct aspeed_pcie_rc_platform {
 	int reg_intx_sts;
 	int reg_msi_en;
 	int reg_msi_sts;
+	int msi_address;
 };
 
 struct aspeed_pcie {
@@ -161,8 +164,8 @@ struct aspeed_pcie {
 	const struct aspeed_pcie_rc_platform *platform;
 
 	int domain;
-	u32 msi_address;
 	u8 tx_tag;
+	int host_bus_num;
 
 	struct reset_control *h2xrst;
 	struct reset_control *perst;
@@ -316,9 +319,9 @@ static int aspeed_ast2600_rd_conf(struct pci_bus *bus, unsigned int devfn,
 	writel(PCIE_UNLOCK_RX_BUFF | readl(pcie->reg + H2X_DEV_CTRL),
 	       pcie->reg + H2X_DEV_CTRL);
 
-	if (bus->number == 128 && slot != 0 && slot != 8)
+	if (bus->number == pcie->host_bus_num && slot != 0 && slot != 8)
 		return PCIBIOS_DEVICE_NOT_FOUND;
-	type = (bus->number > 128);
+	type = (bus->number > pcie->host_bus_num);
 
 	if (type) {
 		regmap_read(pcie->pciephy, PEHR_LINK, &link_sts);
@@ -395,7 +398,7 @@ static int aspeed_ast2600_rd_conf(struct pci_bus *bus, unsigned int devfn,
 
 	if (IS_ENABLED(CONFIG_HOTPLUG_PCI_PCIE)) {
 		if (where == (0x80 + PCI_EXP_SLTSTA) &&
-		    bus->number == 128 &&
+		    bus->number == pcie->host_bus_num &&
 		    PCI_SLOT(devfn) == 0x8 &&
 		    PCI_FUNC(devfn) == 0x0 &&
 		    pcie->hotplug_event)
@@ -422,7 +425,7 @@ static int aspeed_ast2600_wr_conf(struct pci_bus *bus, unsigned int devfn,
 
 	if (IS_ENABLED(CONFIG_HOTPLUG_PCI_PCIE)) {
 		if (where == (0x80 + PCI_EXP_SLTSTA) &&
-		    bus->number == 128 &&
+		    bus->number == pcie->host_bus_num &&
 		    PCI_SLOT(devfn) == 0x8 &&
 		    PCI_FUNC(devfn) == 0x0 &&
 		    pcie->hotplug_event &&
@@ -450,7 +453,7 @@ static int aspeed_ast2600_wr_conf(struct pci_bus *bus, unsigned int devfn,
 		break;
 	}
 
-	type = (bus->number > 128);
+	type = (bus->number > pcie->host_bus_num);
 
 	bdf_offset = (bus->number << 24) | (PCI_SLOT(devfn) << 19) |
 		     (PCI_FUNC(devfn) << 16) | (where & ~3);
@@ -526,10 +529,10 @@ static int aspeed_ast2700_rd_conf(struct pci_bus *bus, unsigned int devfn,
 	u8 type;
 	int ret;
 
-	if ((bus->number == 0 && devfn != 0))
+	if ((bus->number == pcie->host_bus_num && devfn != 0))
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
-	if (bus->number == 0) {
+	if (bus->number == pcie->host_bus_num) {
 		/* Internal access to bridge */
 		writel(0xF << 16 | (where & ~3), pcie->reg + H2X_CFGI_TLP);
 		writel(CFGI_TLP_FIRE, pcie->reg + H2X_CFGI_CTRL);
@@ -543,7 +546,9 @@ static int aspeed_ast2700_rd_conf(struct pci_bus *bus, unsigned int devfn,
 
 		pcie->tx_tag %= 0xF;
 
-		type = (bus->number == 1) ? PCI_HEADER_TYPE_NORMAL : PCI_HEADER_TYPE_BRIDGE;
+		type = (bus->number == (pcie->host_bus_num + 1)) ?
+			       PCI_HEADER_TYPE_NORMAL :
+			       PCI_HEADER_TYPE_BRIDGE;
 
 		writel(CRG_READ_FMTTYPE(type) | CRG_PAYLOAD_SIZE, pcie->reg + H2X_CFGE_TLP_1ST);
 		writel(0x40100F | (pcie->tx_tag << 8), pcie->reg + H2X_CFGE_TLP_NEXT);
@@ -601,7 +606,7 @@ static int aspeed_ast2700_wr_conf(struct pci_bus *bus, unsigned int devfn,
 	u32 bdf_offset, status, type;
 	int ret;
 
-	if ((bus->number == 0 && devfn != 0))
+	if ((bus->number == pcie->host_bus_num && devfn != 0))
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
 	switch (size) {
@@ -618,7 +623,7 @@ static int aspeed_ast2700_wr_conf(struct pci_bus *bus, unsigned int devfn,
 		break;
 	}
 
-	if (bus->number == 0) {
+	if (bus->number == pcie->host_bus_num) {
 		/* Internal access to bridge */
 		writel(0x100000 | byte_en << 16 | (where & ~3), pcie->reg + H2X_CFGI_TLP);
 		writel(val, pcie->reg + H2X_CFGI_WR_DATA);
@@ -631,7 +636,9 @@ static int aspeed_ast2700_wr_conf(struct pci_bus *bus, unsigned int devfn,
 			     (PCI_FUNC(devfn) << 16) | (where & ~3);
 		pcie->tx_tag %= 0xF;
 
-		type = (bus->number == 1) ? PCI_HEADER_TYPE_NORMAL : PCI_HEADER_TYPE_BRIDGE;
+		type = (bus->number == (pcie->host_bus_num + 1)) ?
+			       PCI_HEADER_TYPE_NORMAL :
+			       PCI_HEADER_TYPE_BRIDGE;
 
 		writel(CRG_WRITE_FMTTYPE(type) | CRG_PAYLOAD_SIZE, pcie->reg + H2X_CFGE_TLP_1ST);
 		writel(0x401000 | (pcie->tx_tag << 8) | byte_en, pcie->reg + H2X_CFGE_TLP_NEXT);
@@ -688,7 +695,7 @@ static void aspeed_msi_compose_msi_msg(struct irq_data *data,
 	struct aspeed_pcie *pcie = irq_data_get_irq_chip_data(data);
 
 	msg->address_hi = 0;
-	msg->address_lo = pcie->msi_address;
+	msg->address_lo = pcie->platform->msi_address;
 	msg->data = data->hwirq;
 }
 
@@ -962,6 +969,11 @@ static int aspeed_ast2600_setup(struct platform_device *pdev)
 	struct device *dev = pcie->dev;
 	int ret;
 
+	if (pcie->host_bus_num != 0x80) {
+		dev_err(dev, "AST2600 only supports to start bus number 0x80\n");
+		return -EINVAL;
+	}
+
 	pcie->ahbc = syscon_regmap_lookup_by_phandle(dev->of_node, "aspeed,ahbc");
 	if (IS_ERR(pcie->ahbc))
 		return dev_err_probe(dev, PTR_ERR(pcie->ahbc), "failed to map ahbc base\n");
@@ -1074,6 +1086,7 @@ static int aspeed_pcie_probe(struct platform_device *pdev)
 	struct pci_host_bridge *host;
 	struct aspeed_pcie *pcie;
 	struct device_node *node = dev->of_node;
+	struct resource bus_range;
 	const void *md = of_device_get_match_data(dev);
 	int irq, ret;
 
@@ -1092,10 +1105,15 @@ static int aspeed_pcie_probe(struct platform_device *pdev)
 	pcie->platform = md;
 	pcie->host = host;
 
+	if (of_pci_parse_bus_range(node, &bus_range)) {
+		dev_warn(dev, "Failed to parse bus range\n");
+		pcie->host_bus_num = 0;
+	}
+	pcie->host_bus_num = bus_range.start;
+
 	pcie->reg = devm_platform_ioremap_resource(pdev, 0);
 
-	of_property_read_u32(node, "msi_address", &pcie->msi_address);
-	of_property_read_u32(node, "linux,pci-domain", &pcie->domain);
+	pcie->domain = of_get_pci_domain_nr(node);
 
 	pcie->cfg = syscon_regmap_lookup_by_phandle(dev->of_node, "aspeed,pciecfg");
 	if (IS_ERR(pcie->cfg))
@@ -1174,6 +1192,7 @@ static struct aspeed_pcie_rc_platform pcie_rc_ast2600 = {
 	.reg_intx_sts = 0x08,
 	.reg_msi_en = 0x20,
 	.reg_msi_sts = 0x28,
+	.msi_address = 0x1e77005c,
 };
 
 static struct aspeed_pcie_rc_platform pcie_rc_ast2700 = {
@@ -1182,6 +1201,7 @@ static struct aspeed_pcie_rc_platform pcie_rc_ast2700 = {
 	.reg_intx_sts = 0x48,
 	.reg_msi_en = 0x50,
 	.reg_msi_sts = 0x58,
+	.msi_address = 0x000000f0,
 };
 
 static const struct of_device_id aspeed_pcie_of_match[] = {
