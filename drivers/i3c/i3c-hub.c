@@ -480,6 +480,15 @@ struct i3c_hub_smbus_agent {
 	/* Agent error*/
 	u32 error;
 
+	/*
+	 * Serializes the master xfer setup (see
+	 * i3c_hub_agent_i2c_xfer_one()) with the FINISH handling in the
+	 * IBI handler (see i3c_hub_agent_ibi()), so that a stale FINISH
+	 * left over by a previous transfer cannot complete the next one
+	 * prematurely.
+	 */
+	struct mutex xfer_lock;
+
 	struct completion completion;
 };
 
@@ -572,9 +581,17 @@ static void i3c_hub_agent_ibi(struct i3c_hub_smbus_agent *agent)
 	unsigned int stat;
 	int ret;
 
+	/*
+	 * Paired with xfer_lock in i3c_hub_agent_i2c_xfer_one(): the
+	 * status read and the FINISH handling must not interleave with
+	 * the xfer setup, otherwise a stale FINISH can be observed.
+	 */
+	mutex_lock(&agent->xfer_lock);
+
 	ret = regmap_read(hub->regmap,
 			  HUB_REG_TP_SMBUS_AGNT_STS(agent->port_nr), &stat);
 	if (ret) {
+		mutex_unlock(&agent->xfer_lock);
 		dev_err(&hub->i3cdev->dev,
 			"TP[%d] - failed to read agent status\n", agent->port_nr);
 		return;
@@ -587,6 +604,8 @@ static void i3c_hub_agent_ibi(struct i3c_hub_smbus_agent *agent)
 		complete(&agent->completion);
 		spin_unlock_irqrestore(&agent->lock, flags);
 	}
+
+	mutex_unlock(&agent->xfer_lock);
 
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
 	/* Slave Agent IBI */
@@ -834,10 +853,18 @@ static int i3c_hub_agent_i2c_xfer_one(struct i3c_hub_smbus_agent *agent,
 		}
 	}
 
+	/*
+	 * reinit_completion() and the transfer start must be atomic against
+	 * the status read and FINISH handling in the IBI handler, otherwise
+	 * a delayed completion from a previous transfer can be delivered
+	 * after this transfer has been reinitialized.
+	 */
+	mutex_lock(&agent->xfer_lock);
 	reinit_completion(&agent->completion);
 
 	/* start transfer */
 	ret = regmap_write(hub->regmap, HUB_REG_TP_SMBUS_AGNT_TRANS_START, port_bit);
+	mutex_unlock(&agent->xfer_lock);
 	if (ret) {
 		dev_err(dev, "write start failed %d\n", ret);
 		return ret;
@@ -1163,6 +1190,7 @@ static int i3c_hub_port_init_smbus_agent(struct i3c_hub *hub,
 
 	init_completion(&agent->completion);
 	spin_lock_init(&agent->lock);
+	mutex_init(&agent->xfer_lock);
 	agent->i2c.owner = THIS_MODULE;
 	agent->i2c.algo = &i3c_hub_smbus_agent_algo;
 	agent->i2c.dev.parent = &hub->i3cdev->dev;
