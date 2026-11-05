@@ -282,6 +282,8 @@
 #define HUB_PAGE_AGENT_RX0(p)		(16 + (4 * (p)) + 2)
 #define HUB_PAGE_AGENT_RX1(p)		(16 + (4 * (p)) + 3)
 
+#define AGENT_INVALID_BUF_IDX		0x6
+
 static const bool ibi_paranoia = true;
 static DEFINE_MUTEX(hub_lock);
 
@@ -379,6 +381,8 @@ struct i3c_hub {
 	bool smbus_agent_polling_active;
 #endif
 };
+
+static void smbus_agent_sync_next_buf_idx(struct i3c_hub_smbus_agent *agent);
 
 /* utils */
 #ifdef CONFIG_I3C_HUB_TP_IDENDIFY
@@ -703,12 +707,13 @@ static int i3c_hub_reset_smbus_agent(struct i3c_hub_smbus_agent *agent, int leve
 
 	ret = i3c_hub_get_target_bus_stat(hub, agent->port_nr, &scl_stat, &sda_stat);
 	if (ret)
-		return ret;
+		goto reset_exit;
 	if (scl_stat == 0 || sda_stat == 0) {
 		dev_warn(&hub->i3cdev->dev,
 			 "TP[%d], SMBus Agent reset(1) aborted: bus busy: SCL=%d, SDA=%d\n",
 			 agent->port_nr, scl_stat, sda_stat);
-		return -EBUSY;
+		ret = -EBUSY;
+		goto reset_exit;
 	}
 
 	ret = regmap_write(hub->regmap,
@@ -750,14 +755,18 @@ static int i3c_hub_reset_smbus_agent(struct i3c_hub_smbus_agent *agent, int leve
 	}
 
 reset_exit:
-	if (ret)
-		dev_err(&hub->i3cdev->dev, "Failed to reset smbus agent:%d\n", ret);
+	if (ret == 0) {
+		if (agent->next_buf_idx == AGENT_INVALID_BUF_IDX)
+			smbus_agent_sync_next_buf_idx(agent);
+	} else {
+		dev_err(&hub->i3cdev->dev, "TP[%d] Failed to reset smbus agent:%d\n",
+			agent->port_nr, ret);
+	}
 
 	ret = regmap_write(hub->regmap,
 			   HUB_REG_TP_SMBUS_AGNT_STS(agent->port_nr),
 			   HUB_REG_AGENT_CNTRL_STATUS_FINISH);
 	ret = regmap_set_bits(hub->regmap, HUB_REG_TP_IBI_CONF, agent->port_mask);
-
 	i3c_hub_protect_register(hub, code);
 
 	return ret;
@@ -1050,7 +1059,7 @@ exit:
 }
 #endif
 
-static int smbus_agent_sync_next_buf_idx(struct i3c_hub_smbus_agent *agent, u32 *next_buf_idx)
+static void smbus_agent_sync_next_buf_idx(struct i3c_hub_smbus_agent *agent)
 {
 	struct i3c_hub *hub = agent->hub;
 	struct i3c_hub_agent_tx_hdr hdr = { 0 };
@@ -1061,17 +1070,17 @@ static int smbus_agent_sync_next_buf_idx(struct i3c_hub_smbus_agent *agent, u32 
 	int i = 0;
 	u8 scl_stat, sda_stat;
 
-	*next_buf_idx = 0;
+	agent->next_buf_idx = AGENT_INVALID_BUF_IDX;
 
 	ret = i3c_hub_get_target_bus_stat(hub, agent->port_nr, &scl_stat, &sda_stat);
 	if (ret)
-		return ret;
+		return;
 
 	if (!scl_stat || !sda_stat) {
 		dev_warn(&hub->i3cdev->dev,
 			 "port[%d] bus not idle (SCL:%d, SDA:%d), skip buffer sync\n",
 			 agent->port_nr, scl_stat, sda_stat);
-		return 0;
+		return;
 	}
 
 	stat_reg = HUB_REG_TP_SMBUS_AGNT_STS(agent->port_nr);
@@ -1097,33 +1106,36 @@ static int smbus_agent_sync_next_buf_idx(struct i3c_hub_smbus_agent *agent, u32 
 
 	rx_done = HUB_REG_AGENT_CNTRL_STATUS_RX_BUF0 | HUB_REG_AGENT_CNTRL_STATUS_RX_BUF1;
 	stat = 0;
-	i = 0;
-	do {
-		ret = regmap_read(hub->regmap, stat_reg, &stat);
-		if (!ret && (stat & rx_done))
-			break;
-	} while (++i < 30);
-
-	if (stat & 0x02) {
-		*next_buf_idx = 1;
-	} else if (stat & 0x04) {
-		*next_buf_idx = 0;
-	} else {
-		dev_warn(&hub->i3cdev->dev, "port[%d] agent loopback error: (%d, %02X)\n",
-			 agent->port_nr, i, stat);
-		*next_buf_idx = 0;
-		agent->error = 1;
-		/* Ignore the sync failure */
-		ret = 0;
+	/* Send the sync command. The command may fail or timeout if bus is not ready */
+	regmap_read_poll_timeout(hub->regmap, stat_reg, stat, (stat & rx_done), 0, 150);
+	/* The SMBus command may be pended due to bus not ready, cancel it */
+	ret = regmap_clear_bits(hub->regmap, HUB_REG_TP_SMBUS_AGNT_EN, agent->port_mask);
+	if (ret)
 		goto err_recover;
+	/* Read out the status */
+	ret = regmap_read(hub->regmap, stat_reg, &stat);
+	if (ret)
+		goto err_recover;
+
+	if ((stat & 0x06) == 0x02) {
+		agent->next_buf_idx = 1;
+	} else if ((stat & 0x06) == 0x04)  {
+		agent->next_buf_idx = 0;
+	} else {
+		dev_warn(&hub->i3cdev->dev, "port[%d] agent rx buf sync failed: (%d, %02X)\n",
+			 agent->port_nr, i, stat);
+		agent->next_buf_idx = AGENT_INVALID_BUF_IDX;
 	}
 
-	ret = 0;
+	dev_info(&hub->i3cdev->dev, "port[%d] agent next buf idx: %d\n",
+		 agent->port_nr, agent->next_buf_idx);
 
 err_recover:
+	if (agent->next_buf_idx == AGENT_INVALID_BUF_IDX)
+		agent->error = 1;
+	regmap_set_bits(hub->regmap, HUB_REG_TP_SMBUS_AGNT_EN, agent->port_mask);
 	regmap_write(hub->regmap, stat_reg, 0x0f);
 	regmap_clear_bits(hub->regmap, HUB_REG_ONCHIP_TD_AND_SMBUS_AGNT_CONF, 0x1);
-	return ret;
 }
 
 static int i3c_hub_port_init_smbus_agent(struct i3c_hub *hub,
@@ -1179,14 +1191,7 @@ static int i3c_hub_port_init_smbus_agent(struct i3c_hub *hub,
 		return -EIO;
 
 	/* Sync the rx_buf index */
-	ret = smbus_agent_sync_next_buf_idx(agent, &agent->next_buf_idx);
-	if (ret) {
-		dev_warn(&hub->i3cdev->dev, "SMBus Agent Rx buf sync failed\n");
-		return ret;
-	}
-
-	dev_info(&hub->i3cdev->dev, "port[%d] - next buf idx: %d\n",
-		 agent->port_nr, agent->next_buf_idx);
+	smbus_agent_sync_next_buf_idx(agent);
 
 	init_completion(&agent->completion);
 	spin_lock_init(&agent->lock);
